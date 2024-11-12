@@ -3,14 +3,21 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleCommand, VehicleLocalPosition, VehicleStatus
+from px4_msgs.msg import (
+    OffboardControlMode,
+    TrajectorySetpoint,
+    VehicleCommand,
+    VehicleLocalPosition,
+    VehicleStatus,
+    VehicleOdometry,
+)
 
 
 class OffboardControl(Node):
     """Node for controlling a vehicle in offboard mode."""
 
     def __init__(self) -> None:
-        super().__init__('offboard_control_takeoff_and_land')
+        super().__init__("offboard_control_takeoff_and_land")
 
         # Configure QoS profile for publishing and subscribing
         qos_profile = QoSProfile(
@@ -22,23 +29,53 @@ class OffboardControl(Node):
 
         # Create publishers
         self.offboard_control_mode_publisher = self.create_publisher(
-            OffboardControlMode, '/fmu/in/offboard_control_mode', qos_profile)
+            OffboardControlMode, "/fmu/in/offboard_control_mode", qos_profile
+        )
         self.trajectory_setpoint_publisher = self.create_publisher(
-            TrajectorySetpoint, '/fmu/in/trajectory_setpoint', qos_profile)
+            TrajectorySetpoint, "/fmu/in/trajectory_setpoint", qos_profile
+        )
         self.vehicle_command_publisher = self.create_publisher(
-            VehicleCommand, '/fmu/in/vehicle_command', qos_profile)
+            VehicleCommand, "/fmu/in/vehicle_command", qos_profile
+        )
 
         # Create subscribers
         self.vehicle_local_position_subscriber = self.create_subscription(
-            VehicleLocalPosition, '/fmu/out/vehicle_local_position', self.vehicle_local_position_callback, qos_profile)
+            VehicleLocalPosition,
+            "/fmu/out/vehicle_local_position",
+            self.vehicle_local_position_callback,
+            qos_profile,
+        )
         self.vehicle_status_subscriber = self.create_subscription(
-            VehicleStatus, '/fmu/out/vehicle_status', self.vehicle_status_callback, qos_profile)
+            VehicleStatus,
+            "/fmu/out/vehicle_status",
+            self.vehicle_status_callback,
+            qos_profile,
+        )
+        self.odometry_subscription = self.create_subscription(
+            VehicleOdometry,
+            "/fmu/out/vehicle_odometry",
+            self.odometry_listener_callback,
+            qos_profile,
+        )
 
         # Initialize variables
         self.offboard_setpoint_counter = 0
         self.vehicle_local_position = VehicleLocalPosition()
         self.vehicle_status = VehicleStatus()
         self.takeoff_height = -5.0
+
+        # Initialize attributes for odometry data
+        self.odometry_x = None
+        self.odometry_y = None
+        self.odometry_z = None
+        self.velocity_x = None
+        self.velocity_y = None
+        self.velocity_z = None
+
+        #offset local position
+        self.offset_local_position_x = 0.0
+        self.offset_local_position_y = 0.0
+        self.offset_local_position_z = 0.0
 
         # Create a timer to publish control commands
         self.timer = self.create_timer(0.1, self.timer_callback)
@@ -50,23 +87,35 @@ class OffboardControl(Node):
     def vehicle_status_callback(self, vehicle_status):
         """Callback function for vehicle_status topic subscriber."""
         self.vehicle_status = vehicle_status
+    def odometry_listener_callback(self, msg):
+        # Store odometry data
+        self.odometry_x = msg.position[0]
+        self.odometry_y = msg.position[1]
+        self.odometry_z = msg.position[2]
+
+        self.velocity_x = msg.velocity[0]
+        self.velocity_y = msg.velocity[1]
+        self.velocity_z = msg.velocity[2]
 
     def arm(self):
         """Send an arm command to the vehicle."""
         self.publish_vehicle_command(
-            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=1.0)
-        self.get_logger().info('Arm command sent')
+            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=1.0
+        )
+        self.get_logger().info("Arm command sent")
 
     def disarm(self):
         """Send a disarm command to the vehicle."""
         self.publish_vehicle_command(
-            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=0.0)
-        self.get_logger().info('Disarm command sent')
+            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=0.0
+        )
+        self.get_logger().info("Disarm command sent")
 
     def engage_offboard_mode(self):
         """Switch to offboard mode."""
         self.publish_vehicle_command(
-            VehicleCommand.VEHICLE_CMD_DO_SET_MODE, param1=1.0, param2=6.0)
+            VehicleCommand.VEHICLE_CMD_DO_SET_MODE, param1=1.0, param2=6.0
+        )
         self.get_logger().info("Switching to offboard mode")
 
     def land(self):
@@ -118,11 +167,15 @@ class OffboardControl(Node):
         self.publish_offboard_control_heartbeat_signal()
 
         if self.offboard_setpoint_counter == 10:
+            self.get_logger().info(f"offset setting complete offset: {self.offset_local_position_x}, {self.offset_local_position_y}, {self.offset_local_position_z}")
             self.engage_offboard_mode()
             self.arm()
 
-        if self.vehicle_local_position.z > self.takeoff_height and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
-            self.publish_position_setpoint(0.0, 0.0, self.takeoff_height)
+        if (
+            self.vehicle_local_position.z > self.takeoff_height
+            and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD
+        ):
+            self.publish_position_setpoint(self.offset_local_position_x + 0.0, self.offset_local_position_y + 0.0, self.offset_local_position_z + self.takeoff_height)
 
         elif self.vehicle_local_position.z <= self.takeoff_height:
             self.land()
@@ -130,10 +183,14 @@ class OffboardControl(Node):
 
         if self.offboard_setpoint_counter < 11:
             self.offboard_setpoint_counter += 1
+            if self.offset_local_position_x != None:
+                self.offset_local_position_x = self.odometry_x
+                self.offset_local_position_y = self.odometry_y
+                self.offset_local_position_z = self.odometry_z
 
 
 def main(args=None) -> None:
-    print('Starting offboard control node...')
+    print("Starting offboard control node...")
     rclpy.init(args=args)
     offboard_control = OffboardControl()
     rclpy.spin(offboard_control)
@@ -141,7 +198,7 @@ def main(args=None) -> None:
     rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         main()
     except Exception as e:
