@@ -65,9 +65,9 @@ class OffboardControl(Node):
         self.takeoff_height = -5.0
 
         # Initialize attributes for odometry data
-        self.odometry_x = None
-        self.odometry_y = None
-        self.odometry_z = None
+        self.odometry_x = 0.0
+        self.odometry_y = 0.0
+        self.odometry_z = 0.0
         self.velocity_x = None
         self.velocity_y = None
         self.velocity_z = None
