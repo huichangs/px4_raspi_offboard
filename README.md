@@ -1,5 +1,9 @@
 # px4_raspi_offboard
 
+## MicroXRCEAgent run code
+
+sudo MicroXRCEAgent serial --dev /dev/serial0 -b 921600
+
 ## offobard_hardware_position_control.py
 
 원 모양으로 이동
